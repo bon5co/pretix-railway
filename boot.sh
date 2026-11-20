@@ -35,6 +35,15 @@ echo "[railway] Pretix on :$PORT as $PRETIX_PRETIX_URL, postgres $PRETIX_DATABAS
 sed -i "s/listen 80 /listen $PORT /; s/listen \[::\]:80 /listen [::]:$PORT /" /etc/nginx/nginx.conf
 grep -q "listen $PORT " /etc/nginx/nginx.conf || fail "could not point nginx at $PORT"
 
+# upstream sizes gunicorn (2 x nproc) and celery (nproc) from the HOST's core count, not the container's memory: on Railway that is
+# dozens of processes and the kernel OOM-kills the workers in a loop. Cap both; a deployer can raise them with variables.
+export NUM_WORKERS="${NUM_WORKERS:-2}"
+case "$NUM_WORKERS" in ''|*[!0-9]*) fail "NUM_WORKERS must be a number, got '$NUM_WORKERS'";; esac
+CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-2}"
+case "$CELERY_CONCURRENCY" in ''|*[!0-9]*) fail "CELERY_CONCURRENCY must be a number, got '$CELERY_CONCURRENCY'";; esac
+sed -i "s#taskworker\$#taskworker --concurrency=$CELERY_CONCURRENCY#" /etc/supervisord/pretixtask.conf
+grep -q "concurrency=$CELERY_CONCURRENCY" /etc/supervisord/pretixtask.conf || fail "could not cap the task worker"
+
 # a volume mounts owned by root; pretixuser (uid 15371) must be able to write
 mkdir -p /data/logs /data/media
 chown -R pretixuser:pretixuser /data || fail "could not hand /data to pretixuser"
